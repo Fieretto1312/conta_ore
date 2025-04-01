@@ -10,47 +10,60 @@ st.markdown("Incolla i messaggi di log qui sotto. Il sistema calcolerà le ore l
 
 testo = st.text_area("📋 Inserisci il testo dei messaggi:", height=400)
 
-def parse_time(t):
-    try:
-        return datetime.strptime(t.strip(), "%H.%M")
-    except ValueError:
-        return datetime.strptime(t.strip(), "%H:%M")
+def parse_time(testo):
+    """Estrae l'orario da una stringa tipo 'inizio 11.45' o 'fine: 21:03'"""
+    match = re.search(r"(\d{1,2}[:.]\d{2})", testo)
+    if match:
+        t = match.group(1).replace(".", ":")
+        return datetime.strptime(t, "%H:%M")
+    return None
 
 def calcola_ore(testo):
-    pattern = r"^(.*?)[—-]\s*(\d{1,2}[:.]\d{2})$"
     righe = testo.strip().split("\n")
 
-    persone = defaultdict(list)
-    ultima_persona = None
+    eventi = []  # Lista di tuple: (persona, tipo_evento, orario)
+
+    persona_corrente = None
 
     for riga in righe:
-        match = re.match(pattern, riga.strip())
+        riga = riga.strip()
+        if not riga:
+            continue
+
+        # Se è una riga con nome e orario
+        match = re.match(r"^(.*?)[—-]\s*(\d{1,2}[:.]\d{2})$", riga)
         if match:
-            persona = match.group(1).strip()
+            persona_corrente = match.group(1).strip()
             orario = parse_time(match.group(2))
-            ultima_persona = persona
-            persone[persona].append((orario, None))
-        elif any(k in riga.lower() for k in ["inizio", "fine", "pausa", "torno"]):
-            if ultima_persona and persone[ultima_persona]:
-                persone[ultima_persona][-1] = (persone[ultima_persona][-1][0], riga.lower())
+        else:
+            tipo = riga.lower()
+            orario = parse_time(riga)
+            if persona_corrente and orario:
+                if any(k in tipo for k in ["inizio", "rientro", "torno"]):
+                    eventi.append((persona_corrente, "inizio", orario))
+                elif any(k in tipo for k in ["fine", "pausa"]):
+                    eventi.append((persona_corrente, "fine", orario))
+
+    # Organizza eventi per persona
+    persone = defaultdict(list)
+    for persona, tipo, orario in eventi:
+        persone[persona].append((tipo, orario))
 
     risultati = {}
 
-    for persona, eventi in persone.items():
+    for persona, logs in persone.items():
+        logs.sort(key=lambda x: x[1])  # Ordina per orario
         intervalli = []
         inizio = None
-        for orario, tipo in eventi:
-            if tipo and "inizio" in tipo:
+
+        for tipo, orario in logs:
+            if tipo == "inizio":
                 inizio = orario
-            elif tipo and ("fine" in tipo or "pausa" in tipo):
-                if inizio:
-                    fine = orario
-                    durata = fine - inizio
-                    if durata.total_seconds() > 0:
-                        intervalli.append(durata)
-                    inizio = None
-            elif tipo and "torno" in tipo:
-                inizio = orario
+            elif tipo == "fine" and inizio:
+                durata = orario - inizio
+                if durata.total_seconds() > 0:
+                    intervalli.append(durata)
+                inizio = None
 
         totale = sum(intervalli, timedelta())
         ore = totale.seconds // 3600
