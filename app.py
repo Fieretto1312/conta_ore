@@ -10,44 +10,61 @@ st.markdown("Incolla i messaggi di log qui sotto. Il sistema calcolerà le ore l
 
 testo = st.text_area("📋 Inserisci il testo dei messaggi:", height=400)
 
-def parse_time(testo):
-    """Estrae l'orario da una stringa tipo 'inizio 11.45' o 'fine: 21:03'"""
-    match = re.search(r"(\d{1,2}[:.]\d{2})", testo)
-    if match:
-        t = match.group(1).replace(".", ":")
-        return datetime.strptime(t, "%H:%M")
+def parse_timestamp(stringa, data_base):
+    """Gestisce conversione di 'Yesterday at 22:00' e '00:30' in datetime corretti"""
+    stringa = stringa.strip()
+    if "yesterday at" in stringa.lower():
+        orario = re.search(r"yesterday at (\d{1,2}[:.]\d{2})", stringa.lower())
+        if orario:
+            t = orario.group(1).replace(".", ":")
+            dt = datetime.strptime(t, "%H:%M")
+            ieri = datetime.now().date() - timedelta(days=1)
+            return datetime.combine(ieri, dt.time())
+    else:
+        orario = re.search(r"(\d{1,2}[:.]\d{2})", stringa)
+        if orario:
+            t = orario.group(1).replace(".", ":")
+            dt = datetime.strptime(t, "%H:%M")
+            giorno = data_base
+            if dt.time() < datetime.strptime("06:00", "%H:%M").time():
+                # dopo la mezzanotte → giorno successivo
+                giorno += timedelta(days=1)
+            return datetime.combine(giorno, dt.time())
     return None
 
 def calcola_ore(testo):
     righe = testo.strip().split("\n")
-
-    eventi = []  # Lista di tuple: (persona, tipo_evento, orario)
+    eventi = []  # Lista di (persona, tipo_evento, timestamp)
 
     persona_corrente = None
+    data_corrente = datetime.now().date()  # Partiamo da oggi
 
     for riga in righe:
         riga = riga.strip()
         if not riga:
             continue
 
-        # Se è una riga con nome e orario
-        match = re.match(r"^(.*?)[—-]\s*(\d{1,2}[:.]\d{2})$", riga)
+        # Controllo se è una riga con "—" e orario
+        match = re.match(r"^(.*?)[—-]\s*(.*)$", riga)
         if match:
             persona_corrente = match.group(1).strip()
-            orario = parse_time(match.group(2))
+            timestamp_raw = match.group(2).strip()
+            ts = parse_timestamp(riga, data_corrente)
+            if ts:
+                data_corrente = ts.date()
         else:
             tipo = riga.lower()
-            orario = parse_time(riga)
-            if persona_corrente and orario:
-                if any(k in tipo for k in ["inizio", "rientro", "torno"]):
-                    eventi.append((persona_corrente, "inizio", orario))
+            ts = parse_timestamp(riga, data_corrente)
+            if persona_corrente and ts:
+                if any(k in tipo for k in ["inizio", "torno", "rientro"]):
+                    eventi.append((persona_corrente, "inizio", ts))
                 elif any(k in tipo for k in ["fine", "pausa"]):
-                    eventi.append((persona_corrente, "fine", orario))
+                    eventi.append((persona_corrente, "fine", ts))
 
-    # Organizza eventi per persona
+    # Organizza per persona
     persone = defaultdict(list)
-    for persona, tipo, orario in eventi:
-        persone[persona].append((tipo, orario))
+    for persona, tipo, timestamp in eventi:
+        persone[persona].append((tipo, timestamp))
 
     risultati = {}
 
@@ -56,11 +73,11 @@ def calcola_ore(testo):
         intervalli = []
         inizio = None
 
-        for tipo, orario in logs:
+        for tipo, timestamp in logs:
             if tipo == "inizio":
-                inizio = orario
+                inizio = timestamp
             elif tipo == "fine" and inizio:
-                durata = orario - inizio
+                durata = timestamp - inizio
                 if durata.total_seconds() > 0:
                     intervalli.append(durata)
                 inizio = None
