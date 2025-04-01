@@ -6,65 +6,46 @@ from collections import defaultdict
 st.set_page_config(page_title="Calcolo Ore Lavorate", layout="wide")
 
 st.title("🕓 Calcolatore Ore Lavorate (Discord Logs)")
-st.markdown("Incolla i messaggi di log qui sotto. Il sistema calcolerà le ore lavorate per ciascuno e assegnerà ✅ o ❌ in base alla soglia 2.30h.")
+st.markdown("Incolla i messaggi di log qui sotto. Il sistema leggerà l'orario direttamente dal messaggio (es. `inizio 17.25`) e calcolerà le ore lavorate per ciascuno.")
 
 testo = st.text_area("📋 Inserisci il testo dei messaggi:", height=400)
 
-def parse_timestamp(stringa, data_base):
-    """Gestisce conversione di 'Yesterday at 22:00' e '00:30' in datetime corretti"""
-    stringa = stringa.strip()
-    if "yesterday at" in stringa.lower():
-        orario = re.search(r"yesterday at (\d{1,2}[:.]\d{2})", stringa.lower())
-        if orario:
-            t = orario.group(1).replace(".", ":")
-            dt = datetime.strptime(t, "%H:%M")
-            ieri = datetime.now().date() - timedelta(days=1)
-            return datetime.combine(ieri, dt.time())
-    else:
-        orario = re.search(r"(\d{1,2}[:.]\d{2})", stringa)
-        if orario:
-            t = orario.group(1).replace(".", ":")
-            dt = datetime.strptime(t, "%H:%M")
-            giorno = data_base
-            if dt.time() < datetime.strptime("06:00", "%H:%M").time():
-                # dopo la mezzanotte → giorno successivo
-                giorno += timedelta(days=1)
-            return datetime.combine(giorno, dt.time())
+def estrai_orario_da_testo(testo):
+    match = re.search(r"(\d{1,2}[:.]\d{2})", testo)
+    if match:
+        t = match.group(1).replace(".", ":")
+        return datetime.strptime(t, "%H:%M")
     return None
 
 def calcola_ore(testo):
     righe = testo.strip().split("\n")
-    eventi = []  # Lista di (persona, tipo_evento, timestamp)
-
+    eventi = []
     persona_corrente = None
-    data_corrente = datetime.now().date()  # Partiamo da oggi
 
     for riga in righe:
         riga = riga.strip()
         if not riga:
             continue
 
-        # Controllo se è una riga con "—" e orario
-        match = re.match(r"^(.*?)[—-]\s*(.*)$", riga)
+        # Se è una riga con il nome utente (aggiorna il riferimento)
+        match = re.match(r"^(.+?)\s+[—-]\s+.*$", riga)
         if match:
             persona_corrente = match.group(1).strip()
-            timestamp_raw = match.group(2).strip()
-            ts = parse_timestamp(riga, data_corrente)
-            if ts:
-                data_corrente = ts.date()
-        else:
-            tipo = riga.lower()
-            ts = parse_timestamp(riga, data_corrente)
-            if persona_corrente and ts:
-                if any(k in tipo for k in ["inizio", "torno", "rientro"]):
-                    eventi.append((persona_corrente, "inizio", ts))
+
+        # Se è una riga con tipo evento + orario
+        if any(k in riga.lower() for k in ["inizio", "fine", "pausa", "rientro", "torno"]):
+            orario = estrai_orario_da_testo(riga)
+            if persona_corrente and orario:
+                tipo = riga.lower()
+                if any(k in tipo for k in ["inizio", "rientro", "torno"]):
+                    eventi.append((persona_corrente, "inizio", orario))
                 elif any(k in tipo for k in ["fine", "pausa"]):
-                    eventi.append((persona_corrente, "fine", ts))
+                    eventi.append((persona_corrente, "fine", orario))
 
     # Organizza per persona
     persone = defaultdict(list)
-    for persona, tipo, timestamp in eventi:
-        persone[persona].append((tipo, timestamp))
+    for persona, tipo, orario in eventi:
+        persone[persona].append((tipo, orario))
 
     risultati = {}
 
@@ -73,11 +54,11 @@ def calcola_ore(testo):
         intervalli = []
         inizio = None
 
-        for tipo, timestamp in logs:
+        for tipo, orario in logs:
             if tipo == "inizio":
-                inizio = timestamp
+                inizio = orario
             elif tipo == "fine" and inizio:
-                durata = timestamp - inizio
+                durata = orario - inizio
                 if durata.total_seconds() > 0:
                     intervalli.append(durata)
                 inizio = None
